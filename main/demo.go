@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	config := RLLOCK.CreateRedisConfig("47.118.90.61:6379", 2, "", 500, 0, 0)
+	config := RLLOCK.CreateRedisConfig("host:port", 2, "", 500, 0, 0)
 	pool, err := RLLOCK.ConnectRedisPool(config)
 	if err != nil {
 		fmt.Print("err: %s\n", err.Error())
@@ -30,7 +30,7 @@ func main() {
 		return
 	}
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	defer func() {
 		_, err = lockFactory.UnLock(context.Background(), lockObj)

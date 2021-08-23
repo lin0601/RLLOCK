@@ -133,7 +133,12 @@ func (s *lockFactory) GetUnLockRetryDelayMS() int64 {
 func (s *lockFactory) Lock(ctx context.Context, keyName string, lockMillSecond int) (lock *RLLock, err error) {
 
 	conn := s.pool.Get()
-	defer conn.Close()
+	defer func() {
+		err := conn.Close()
+		if err != nil {
+			fmt.Printf("关闭redis池失败: %s \n", err.Error())
+		}
+	}()
 	lockTime := lockMillSecond
 
 	randomData := GetRandomValue()
@@ -217,7 +222,12 @@ func (s *lockFactory) UnLock(ctx context.Context, lock *RLLock) (isUnLock bool, 
 	}
 
 	conn := s.pool.Get()
-	defer conn.Close()
+	defer func() {
+		err := conn.Close()
+		if err != nil {
+			fmt.Printf("关闭redis池失败: %s \n", err.Error())
+		}
+	}()
 
 	retry := s.GetUnLockRetryCount()
 
@@ -251,17 +261,33 @@ func (s *lockFactory) UnLock(ctx context.Context, lock *RLLock) (isUnLock bool, 
 
 // 续命
 func (s *lockFactory) RenewalLife(lock *RLLock, continuedTime int) {
-
+	timer := time.NewTimer(time.Duration(continuedTime) * time.Millisecond)
 	conn := s.pool.Get()
-	defer conn.Close()
 	if continuedTime < 0 {
 		continuedTime = DefaultContinuedTime
 	}
+	defer func() {
+		if !timer.Stop() {
+			// <-timer.C失败直接走默认---往下接着走
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		err := conn.Close()
+		if err != nil {
+			fmt.Printf("关闭redis池失败: %s \n", err.Error())
+
+		}
+
+	}()
+
 	// todo 这里加个错误重试次数吧
 	for {
 		if lock.IsUnlock {
 			return
 		}
+		timer.Reset(time.Duration(continuedTime) * time.Millisecond)
 		select {
 		// 这里读出，让消息关闭
 		case <-lock.RedisChan:
@@ -270,7 +296,7 @@ func (s *lockFactory) RenewalLife(lock *RLLock, continuedTime int) {
 			lock.UnlockTime = time.Now().UnixNano() / 1e6
 			close(lock.RedisChan)
 			return
-		case <-time.After(time.Duration(continuedTime) * time.Millisecond):
+		case <-timer.C:
 			// 默认 500毫秒进行续命一次
 			fmt.Print("keepAlive-开始续命 \n")
 			luaRes, err := luaScriptExpire.Do(conn, lock.KeyName, lock.KeyName, lock.RandomKey, lock.ContinuedTime)
